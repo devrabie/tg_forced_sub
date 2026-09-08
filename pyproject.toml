@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tg_forced_sub"
+version = "0.1.0"
+description = "High-performance, feature-rich Telegram Forced Subscription package for aiogram 3.x with Redis caching, join requests, smart rotation, and multi-tenant support."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "devrabie"}
+]
+keywords = [
+    "telegram",
+    "aiogram",
+    "forced-subscription",
+    "redis",
+    "telegram-bot",
+    "bot-factory",
+    "subscription-check"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+]
+dependencies = [
+    "aiogram>=3.0.0",
+    "redis>=5.0.0",
+    "pydantic>=2.0.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/devrabie/tg_forced_sub"
+Repository = "https://github.com/devrabie/tg_forced_sub.git"
+Issues = "https://github.com/devrabie/tg_forced_sub/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tg_forced_sub*"]
