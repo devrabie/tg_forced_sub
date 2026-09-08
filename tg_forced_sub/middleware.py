@@ -19,12 +19,14 @@ class ForcedSubMiddleware(BaseMiddleware):
         manager: ForcedSubManager,
         ignore_admins: Optional[List[int]] = None,
         ignore_commands: Optional[List[str]] = None,
+        is_admin_func: Optional[Callable[[Bot, int], Awaitable[bool]]] = None,
         private_only: bool = True,
         auto_answer_callbacks: bool = True,
     ):
         self.manager = manager
         self.ignore_admins = set(ignore_admins or [])
         self.ignore_commands = set(cmd.lower() for cmd in (ignore_commands or []))
+        self.is_admin_func = is_admin_func
         self.private_only = private_only
         self.auto_answer_callbacks = auto_answer_callbacks
 
@@ -43,9 +45,19 @@ class ForcedSubMiddleware(BaseMiddleware):
         if not user or user.is_bot:
             return await handler(event, data)
 
+        bot: Bot = data.get("bot") or getattr(real_event, "bot", None)  # type: ignore
+
         # 1. Ignore whitelisted admins
         if user.id in self.ignore_admins:
             return await handler(event, data)
+
+        if self.is_admin_func and bot:
+            try:
+                if await self.is_admin_func(bot, user.id):
+                    return await handler(event, data)
+            except Exception:
+                pass
+
 
         # 2. Check chat type
         chat = getattr(real_event, "chat", None)
@@ -64,7 +76,8 @@ class ForcedSubMiddleware(BaseMiddleware):
                 return await handler(event, data)
 
         # 5. Perform subscription check
-        bot: Bot = data.get("bot") or real_event.bot  # type: ignore
+        if not bot:
+            bot = data.get("bot") or getattr(real_event, "bot", None)  # type: ignore
         result = await self.manager.check_user(
             bot=bot,
             user_id=user.id,
