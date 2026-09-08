@@ -200,3 +200,40 @@ class RedisStorage(BaseStorage):
             return False
         ch.position = position
         return await self.add_channel(ch)
+
+    def _active_prompt_key(self, scope: str, user_id: int) -> str:
+        return f"{self.prefix}:prompt:{scope}:{user_id}"
+
+    async def save_active_prompt(
+        self, scope: str, user_id: int, chat_id: int, message_id: int, ttl: int = 86400
+    ) -> None:
+        key = self._active_prompt_key(scope, user_id)
+        payload = json.dumps({"chat_id": chat_id, "message_id": message_id})
+        await self.redis.set(key, payload, ex=ttl)
+
+    async def get_active_prompt(
+        self, scope: str, user_id: int
+    ) -> Optional[dict]:
+        key = self._active_prompt_key(scope, user_id)
+        raw = await self.redis.get(key)
+        if not raw:
+            return None
+        raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        try:
+            return json.loads(raw_str)
+        except Exception:
+            return None
+
+    async def clear_active_prompt(self, scope: str, user_id: int) -> None:
+        key = self._active_prompt_key(scope, user_id)
+        await self.redis.delete(key)
+
+    async def invalidate_user_cache(
+        self, scope: str, channel_id: Union[int, str], user_id: int
+    ) -> None:
+        # Invalidate both specific scope and global cache for safety
+        keys = [
+            self._user_cache_key(scope, channel_id, user_id),
+            self._user_cache_key("global", channel_id, user_id),
+        ]
+        await self.redis.delete(*keys)

@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Optional, Union
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import CallbackQuery, ChatJoinRequest, Message
+from aiogram.enums import ChatMemberStatus
+from aiogram.types import CallbackQuery, ChatJoinRequest, ChatMemberUpdated, Message
 from aiogram.exceptions import TelegramBadRequest
 
 from tg_forced_sub.manager import ForcedSubManager
@@ -99,6 +100,55 @@ def create_forced_sub_router(manager: ForcedSubManager) -> Router:
         channel_id = event.chat.id
         await manager.storage.record_pending_request(channel_id, user_id)
         logger.info(f"Recorded pending join request: user={user_id} in channel={channel_id}")
+
+    @router.chat_member()
+    async def on_chat_member_updated(event: ChatMemberUpdated, bot: Bot):
+        """
+        Listens to real-time member join and leave events across managed channels.
+        - When a user joins: immediately caches membership, records join, and updates/removes
+          the active forced subscription prompt message in real-time!
+        - When a user leaves: immediately revokes their cached membership so forced sub re-engages.
+        """
+        user = event.new_chat_member.user
+        if not user or user.is_bot:
+            return
+
+        channel_id = event.chat.id
+        old_status = event.old_chat_member.status
+        new_status = event.new_chat_member.status
+
+        active_statuses = {
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.CREATOR,
+        }
+
+        was_member = old_status in active_statuses or (
+            old_status == ChatMemberStatus.RESTRICTED and getattr(event.old_chat_member, "is_member", False)
+        )
+        is_member = new_status in active_statuses or (
+            new_status == ChatMemberStatus.RESTRICTED and getattr(event.new_chat_member, "is_member", False)
+        )
+
+        # 1. User Joined the Channel!
+        if not was_member and is_member:
+            logger.info(f"Real-time event: User {user.id} joined channel {channel_id}")
+            await manager.on_member_joined(
+                bot=bot,
+                channel_id=channel_id,
+                user_id=user.id,
+                user_first_name=user.first_name,
+                bot_id=bot.id,
+            )
+
+        # 2. User Left / Was Kicked from the Channel!
+        elif was_member and not is_member:
+            logger.info(f"Real-time event: User {user.id} left channel {channel_id}")
+            await manager.on_member_left(
+                channel_id=channel_id,
+                user_id=user.id,
+                bot_id=bot.id,
+            )
 
     return router
 

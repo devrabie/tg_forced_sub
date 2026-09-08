@@ -80,6 +80,33 @@ class TestForcedSubManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kb.inline_keyboard[2][0].text, "Verify Now")
         self.assertEqual(kb.inline_keyboard[2][0].callback_data, "fsub:check")
 
+    async def test_live_member_join_and_leave(self):
+        storage_mock = AsyncMock()
+        storage_mock.get_active_prompt.return_value = {"chat_id": 999, "message_id": 888}
+        storage_mock.get_channels.return_value = []
+
+        manager = ForcedSubManager(storage=storage_mock)
+        bot_mock = AsyncMock()
+
+        # Test on_member_joined
+        await manager.on_member_joined(
+            bot=bot_mock,
+            channel_id=-1001,
+            user_id=123,
+            user_first_name="Rabie"
+        )
+        storage_mock.cache_user_subscription.assert_called()
+        storage_mock.record_user_join.assert_called()
+        bot_mock.edit_message_text.assert_called()
+
+        # Test on_member_left
+        await manager.on_member_left(
+            channel_id=-1001,
+            user_id=123
+        )
+        storage_mock.invalidate_user_cache.assert_called()
+
 
 if __name__ == "__main__":
     unittest.main()
+

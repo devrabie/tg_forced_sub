@@ -294,3 +294,101 @@ class ForcedSubManager:
             builder.row(*custom_buttons)
 
         return builder.as_markup()
+
+    async def save_active_prompt(
+        self, scope: str, user_id: int, chat_id: int, message_id: int, ttl: int = 86400
+    ) -> None:
+        """Store active prompt message coordinates for real-time updating."""
+        await self.storage.save_active_prompt(scope, user_id, chat_id, message_id, ttl)
+
+    async def get_active_prompt(self, scope: str, user_id: int) -> Optional[dict]:
+        """Retrieve active prompt coordinates."""
+        return await self.storage.get_active_prompt(scope, user_id)
+
+    async def clear_active_prompt(self, scope: str, user_id: int) -> None:
+        """Clear active prompt message."""
+        await self.storage.clear_active_prompt(scope, user_id)
+
+    async def on_member_joined(
+        self,
+        bot: Bot,
+        channel_id: Union[int, str],
+        user_id: int,
+        user_first_name: str = "",
+        bot_id: Optional[Union[int, str]] = None,
+    ) -> None:
+        """
+        Triggered in real-time when a user joins a managed channel.
+        Caches subscription, counts join, and automatically updates or clears active prompt message.
+        """
+        scope = str(bot_id) if bot_id else str(bot.id)
+        cid = str(channel_id)
+
+        # 1. Cache user as subscribed
+        await self.storage.cache_user_subscription(scope, cid, user_id, self.cache_ttl)
+        await self.storage.cache_user_subscription("global", cid, user_id, self.cache_ttl)
+        await self.storage.record_user_join(scope, cid, user_id)
+        await self.storage.record_user_join("global", cid, user_id)
+
+        # 2. Check if user has an active prompt message
+        active_prompt = await self.storage.get_active_prompt(scope, user_id)
+        if not active_prompt:
+            active_prompt = await self.storage.get_active_prompt("global", user_id)
+
+        if not active_prompt:
+            return
+
+        chat_id = active_prompt["chat_id"]
+        message_id = active_prompt["message_id"]
+
+        # 3. Check remaining subscription requirements
+        result = await self.check_user(
+            bot=bot,
+            user_id=user_id,
+            user_first_name=user_first_name,
+            bot_id=bot_id,
+        )
+
+        try:
+            if result.is_subscribed:
+                # All channels joined! Update message to celebrate and allow usage
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text="✅ <b>تم التحقق تلقائياً من اشتراكك بنجاح!</b>\nشكراً لك، يمكنك الآن استخدام البوت بحرية.",
+                    parse_mode="HTML",
+                )
+                await self.storage.clear_active_prompt(scope, user_id)
+            else:
+                # Some channels remain: dynamically update buttons and text!
+                # The channel the user just joined is now excluded from the keyboard!
+                text = self.format_message(result, user_first_name)
+                keyboard = self.build_keyboard(result)
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                logger.debug(f"Live update message failed: {e}")
+        except Exception as e:
+            logger.debug(f"Unexpected error in live UI update: {e}")
+
+    async def on_member_left(
+        self,
+        channel_id: Union[int, str],
+        user_id: int,
+        bot_id: Optional[Union[int, str]] = None,
+    ) -> None:
+        """
+        Triggered in real-time when a user leaves a managed channel.
+        Instantly invalidates cached membership so forced subscription re-triggers.
+        """
+        scope = str(bot_id) if bot_id else "global"
+        await self.storage.invalidate_user_cache(scope, channel_id, user_id)
+        logger.info(f"Invalidated forced sub cache for user {user_id} leaving channel {channel_id}")
+

@@ -79,8 +79,9 @@ class ForcedSubMiddleware(BaseMiddleware):
         text = self.manager.format_message(result, user.first_name)
         keyboard = self.manager.build_keyboard(result)
 
+        prompt_msg = None
         if isinstance(real_event, Message):
-            await real_event.answer(
+            prompt_msg = await real_event.answer(
                 text=text,
                 reply_markup=keyboard,
                 parse_mode="HTML",
@@ -94,7 +95,7 @@ class ForcedSubMiddleware(BaseMiddleware):
                 )
             if real_event.message:
                 try:
-                    await real_event.message.edit_text(
+                    prompt_msg = await real_event.message.edit_text(
                         text=text,
                         reply_markup=keyboard,
                         parse_mode="HTML",
@@ -103,5 +104,15 @@ class ForcedSubMiddleware(BaseMiddleware):
                 except Exception:
                     pass
 
+        if prompt_msg and hasattr(prompt_msg, "message_id") and hasattr(prompt_msg, "chat"):
+            effective_scope = str(bot.id)
+            await self.manager.save_active_prompt(
+                scope=effective_scope,
+                user_id=user.id,
+                chat_id=prompt_msg.chat.id,
+                message_id=prompt_msg.message_id,
+            )
+
         # Stop event from propagating to downstream handlers
         return None
+

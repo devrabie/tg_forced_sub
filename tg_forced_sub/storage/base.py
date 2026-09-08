@@ -110,3 +110,29 @@ class BaseStorage(ABC):
     ) -> bool:
         """Set priority position for channel ordering."""
         pass
+
+    @abstractmethod
+    async def save_active_prompt(
+        self, scope: str, user_id: int, chat_id: int, message_id: int, ttl: int = 86400
+    ) -> None:
+        """Save the active forced subscription prompt message so it can be updated in real-time."""
+        pass
+
+    @abstractmethod
+    async def get_active_prompt(
+        self, scope: str, user_id: int
+    ) -> Optional[dict]:
+        """Retrieve the active prompt message coordinates {'chat_id': ..., 'message_id': ...}."""
+        pass
+
+    @abstractmethod
+    async def clear_active_prompt(self, scope: str, user_id: int) -> None:
+        """Clear active prompt message for user after successful subscription."""
+        pass
+
+    @abstractmethod
+    async def invalidate_user_cache(
+        self, scope: str, channel_id: Union[int, str], user_id: int
+    ) -> None:
+        """Invalidate user's cached subscription (e.g. when user leaves the channel)."""
+        pass
