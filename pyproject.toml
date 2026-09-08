@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg_forced_sub"
-version = "0.1.0"
+version = "0.2.0"
 description = "High-performance, feature-rich Telegram Forced Subscription package for aiogram 3.x with Redis caching, join requests, smart rotation, and multi-tenant support."
 readme = "README.md"
 requires-python = ">=3.9"
