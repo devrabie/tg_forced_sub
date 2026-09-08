@@ -6,6 +6,7 @@ from tg_forced_sub.models import (
     ForcedChannel,
     ChannelStatus,
     ChannelType,
+    ChannelCategory,
     CheckResult,
 )
 from tg_forced_sub.storage import (
@@ -29,6 +30,7 @@ __all__ = [
     "ForcedChannel",
     "ChannelStatus",
     "ChannelType",
+    "ChannelCategory",
     "CheckResult",
     "BaseStorage",
     "RedisStorage",

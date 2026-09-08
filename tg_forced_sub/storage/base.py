@@ -136,3 +136,23 @@ class BaseStorage(ABC):
     ) -> None:
         """Invalidate user's cached subscription (e.g. when user leaves the channel)."""
         pass
+
+    @abstractmethod
+    async def move_to_top(self, scope: str, channel_id: Union[int, str]) -> bool:
+        """Move channel to top of the list (highest priority position)."""
+        pass
+
+    @abstractmethod
+    async def check_and_record_link_impression(
+        self, scope: str, link_id: Union[int, str], user_id: int, cap: int = 2, period: int = 86400
+    ) -> bool:
+        """
+        Check if user has not exceeded frequency cap for this link within period.
+        If eligible to show, increments count and returns True. Otherwise False.
+        """
+        pass
+
+    @abstractmethod
+    async def increment_link_views(self, scope: str, link_id: Union[int, str]) -> int:
+        """Increment total view count for a link."""
+        pass

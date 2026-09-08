@@ -237,3 +237,41 @@ class RedisStorage(BaseStorage):
             self._user_cache_key("global", channel_id, user_id),
         ]
         await self.redis.delete(*keys)
+
+    async def move_to_top(self, scope: str, channel_id: Union[int, str]) -> bool:
+        channels = await self.get_channels(scope, active_only=False)
+        if not channels:
+            return False
+        max_pos = max((c.position for c in channels), default=0)
+        target = next((c for c in channels if str(c.channel_id) == str(channel_id)), None)
+        if not target:
+            return False
+        target.position = max_pos + 1
+        return await self.add_channel(target)
+
+    def _link_impression_key(self, scope: str, link_id: Union[int, str], user_id: int) -> str:
+        return f"{self.prefix}:limp:{scope}:{link_id}:{user_id}"
+
+    async def check_and_record_link_impression(
+        self, scope: str, link_id: Union[int, str], user_id: int, cap: int = 2, period: int = 86400
+    ) -> bool:
+        key = self._link_impression_key(scope, link_id, user_id)
+        current = await self.redis.get(key)
+        count = int(current) if current else 0
+        if count >= cap:
+            return False
+
+        pipe = self.redis.pipeline()
+        pipe.incr(key)
+        if not current:
+            pipe.expire(key, period)
+        await pipe.execute()
+        return True
+
+    async def increment_link_views(self, scope: str, link_id: Union[int, str]) -> int:
+        ch = await self.get_channel(scope, link_id)
+        if not ch:
+            return 0
+        ch.views_count += 1
+        await self.add_channel(ch)
+        return ch.views_count

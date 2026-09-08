@@ -14,7 +14,13 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from redis.asyncio import Redis
 
-from tg_forced_sub.models import ForcedChannel, ChannelStatus, CheckResult, ChannelType
+from tg_forced_sub.models import (
+    ForcedChannel,
+    ChannelStatus,
+    CheckResult,
+    ChannelType,
+    ChannelCategory,
+)
 from tg_forced_sub.storage.base import BaseStorage
 from tg_forced_sub.storage.redis_storage import RedisStorage
 
@@ -24,6 +30,14 @@ DEFAULT_FORCED_SUB_TEMPLATE = (
     "🚸| عذرًا عزيزي {name}، عليك الإشتراك بقنوات البوت أولًا لتتمكن من إستخدامه:\n\n"
     "{channels}\n"
     "‼️| بعد الإشتراك، اضغط على زر التحقق بالأسفل للاستمرار."
+)
+
+DEFAULT_LINK_PROMO_TEMPLATE = (
+    "📢 <b>إعلان مميز</b>\n"
+    "━━━━━━━━━━━━━━━━━\n\n"
+    "عزيزي {name}، يرجى زيارة الرابط التالي لدعم البوت والاستمرار في استخدامه:\n\n"
+    "{channels}\n"
+    "اضغط على الرابط أعلاه ثم اضغط على زر المتابعة بالأسفل للاستمرار."
 )
 
 
@@ -41,8 +55,10 @@ class ForcedSubManager:
         max_visible_channels: Optional[int] = None,
         allow_pending_requests: bool = True,
         custom_message: str = DEFAULT_FORCED_SUB_TEMPLATE,
+        link_message: str = DEFAULT_LINK_PROMO_TEMPLATE,
         check_button_text: str = "✅ تحقق من الإشتراك",
         check_callback_data: str = "fsub:check",
+        continue_button_text: str = "تابع استخدام البوت ◀️",
         auto_heal_degraded: bool = True,
         on_channel_degraded: Optional[Callable[[Union[int, str], str], None]] = None,
     ):
@@ -56,8 +72,10 @@ class ForcedSubManager:
         self.max_visible_channels = max_visible_channels
         self.allow_pending_requests = allow_pending_requests
         self.custom_message = custom_message
+        self.link_message = link_message
         self.check_button_text = check_button_text
         self.check_callback_data = check_callback_data
+        self.continue_button_text = continue_button_text
         self.auto_heal_degraded = auto_heal_degraded
         self.on_channel_degraded = on_channel_degraded
 
@@ -66,12 +84,15 @@ class ForcedSubManager:
         channel_id: Union[int, str],
         title: str,
         invite_link: str,
+        category: ChannelCategory = ChannelCategory.PRIMARY,
         scope: str = "global",
         target_joins: Optional[int] = None,
         expire_seconds: Optional[int] = None,
         position: int = 0,
         ad_text: Optional[str] = None,
         channel_type: ChannelType = ChannelType.CHANNEL,
+        frequency_cap: int = 2,
+        frequency_period: int = 86400,
         allow_pending_request: bool = True,
     ) -> ForcedChannel:
         """Helper to quickly register a channel into storage."""
@@ -82,24 +103,83 @@ class ForcedSubManager:
             channel_id=channel_id,
             title=title,
             invite_link=invite_link,
+            category=category,
             scope=str(scope),
             target_joins=target_joins,
             expire_at=expire_at,
             position=position,
             ad_text=ad_text,
             channel_type=channel_type,
+            frequency_cap=frequency_cap,
+            frequency_period=frequency_period,
             allow_pending_request=allow_pending_request,
         )
         await self.storage.add_channel(channel)
         return channel
 
+    async def add_link(
+        self,
+        link_id: Union[int, str],
+        title: str,
+        url: str,
+        scope: str = "global",
+        ad_text: Optional[str] = None,
+        frequency_cap: int = 2,
+        frequency_period: int = 86400,
+        expire_seconds: Optional[int] = None,
+    ) -> ForcedChannel:
+        """Helper to register a direct promo link (no telegram check, frequency capped)."""
+        return await self.add_channel(
+            channel_id=link_id,
+            title=title,
+            invite_link=url,
+            category=ChannelCategory.LINK,
+            scope=scope,
+            ad_text=ad_text,
+            frequency_cap=frequency_cap,
+            frequency_period=frequency_period,
+            expire_seconds=expire_seconds,
+            channel_type=ChannelType.DIRECT_LINK,
+        )
+
     async def remove_channel(self, channel_id: Union[int, str], scope: str = "global") -> bool:
         """Remove a channel from storage."""
         return await self.storage.remove_channel(str(scope), channel_id)
 
-    async def get_channels(self, scope: str = "global", active_only: bool = True) -> List[ForcedChannel]:
-        """Fetch all channels registered under a scope."""
-        return await self.storage.get_channels(str(scope), active_only=active_only)
+    async def get_channels(
+        self,
+        scope: str = "global",
+        category: Optional[ChannelCategory] = None,
+        active_only: bool = True
+    ) -> List[ForcedChannel]:
+        """Fetch all channels registered under a scope, optionally filtered by category."""
+        channels = await self.storage.get_channels(str(scope), active_only=active_only)
+        if category:
+            channels = [c for c in channels if c.category == category]
+        return channels
+
+    async def move_channel_to_top(self, channel_id: Union[int, str], scope: str = "global") -> bool:
+        """Move a channel to the top of its category priority list."""
+        return await self.storage.move_to_top(str(scope), channel_id)
+
+    async def toggle_channel_status(self, channel_id: Union[int, str], scope: str = "global") -> Optional[ChannelStatus]:
+        """Toggle a channel status between active and paused."""
+        ch = await self.storage.get_channel(str(scope), channel_id)
+        if not ch:
+            return None
+        new_status = ChannelStatus.PAUSED if ch.status == ChannelStatus.ACTIVE else ChannelStatus.ACTIVE
+        ch.status = new_status
+        await self.storage.add_channel(ch)
+        return new_status
+
+    async def set_channel_ttl(self, channel_id: Union[int, str], ttl_seconds: int, scope: str = "global") -> bool:
+        """Set channel expiration in seconds (0 = permanent)."""
+        import time
+        ch = await self.storage.get_channel(str(scope), channel_id)
+        if not ch:
+            return False
+        ch.expire_at = (int(time.time()) + ttl_seconds) if ttl_seconds > 0 else None
+        return await self.storage.add_channel(ch)
 
     async def check_user(
         self,
@@ -109,10 +189,11 @@ class ForcedSubManager:
         bot_id: Optional[Union[int, str]] = None,
     ) -> CheckResult:
         """
-        Comprehensive check to verify whether user has joined all required channels.
-        Checks both 'global' platform channels and local 'bot_id' channels.
+        Comprehensive 3-tier check:
+        Tier 1: PRIMARY channels (Sequential: strictly one by one in order of position DESC).
+        Tier 2: SECONDARY channels (Combined: all unjoined secondary channels in one message).
+        Tier 3: DIRECT PROMO LINKS (Frequency Capped: shows if under impression cap within period).
         """
-        # 1. Fetch channels: Global + Local Bot Scope
         scopes = ["global"]
         effective_bot_id = str(bot_id) if bot_id else str(bot.id)
         if effective_bot_id != "global":
@@ -124,7 +205,7 @@ class ForcedSubManager:
         for sc in scopes:
             channels = await self.storage.get_channels(sc, active_only=True)
             for ch in channels:
-                cid_str = str(ch.channel_id)
+                cid_str = f"{sc}:{ch.channel_id}"
                 if cid_str not in seen_channel_ids:
                     seen_channel_ids.add(cid_str)
                     all_channels.append(ch)
@@ -132,51 +213,96 @@ class ForcedSubManager:
         if not all_channels:
             return CheckResult(is_subscribed=True, unjoined_channels=[], cached=True, user_id=user_id)
 
-        unjoined: List[ForcedChannel] = []
-        all_cached = True
+        # Separate items by category
+        primary_channels = [c for c in all_channels if c.category == ChannelCategory.PRIMARY]
+        secondary_channels = [c for c in all_channels if c.category == ChannelCategory.SECONDARY]
+        link_channels = [c for c in all_channels if c.category == ChannelCategory.LINK]
 
-        for channel in all_channels:
+        # Sort primary channels by position DESC, then created_at ASC
+        primary_channels.sort(key=lambda c: (-c.position, c.created_at))
+
+        # --- TIER 1: PRIMARY CHANNELS (Sequential) ---
+        for channel in primary_channels:
             cid = channel.channel_id
-
-            # Skip channel if currently marked as degraded (self-healing)
             if self.auto_heal_degraded and await self.storage.is_channel_degraded(cid):
                 continue
-
-            # Check positive cache first
             if await self.storage.is_user_cached(channel.scope, cid, user_id):
                 continue
-
-            all_cached = False
-
-            # Check join request tracking
             if self.allow_pending_requests and channel.allow_pending_request:
                 if await self.storage.has_pending_request(cid, user_id):
-                    # User submitted a join request -> satisfied!
-                    await self.storage.cache_user_subscription(
-                        channel.scope, cid, user_id, self.cache_ttl
-                    )
+                    await self.storage.cache_user_subscription(channel.scope, cid, user_id, self.cache_ttl)
                     continue
 
-            # Verify with Telegram API
             is_member = await self._verify_telegram_membership(bot, cid, user_id, channel)
             if is_member:
-                # Cache user subscription
-                await self.storage.cache_user_subscription(
-                    channel.scope, cid, user_id, self.cache_ttl
-                )
-                # Count unique join
+                await self.storage.cache_user_subscription(channel.scope, cid, user_id, self.cache_ttl)
                 await self.storage.record_user_join(channel.scope, cid, user_id)
             else:
-                unjoined.append(channel)
+                # Sequential: Return immediately with this single primary channel
+                return CheckResult(
+                    is_subscribed=False,
+                    unjoined_channels=[channel],
+                    category=ChannelCategory.PRIMARY,
+                    cached=False,
+                    user_id=user_id,
+                    bot_id=int(effective_bot_id) if effective_bot_id.isdigit() else None,
+                )
 
-        # Apply smart rotation (Max Visible Channels limit)
-        if self.max_visible_channels and len(unjoined) > self.max_visible_channels:
-            unjoined = unjoined[: self.max_visible_channels]
+        # --- TIER 2: SECONDARY CHANNELS (Combined) ---
+        unjoined_secondary = []
+        for channel in secondary_channels:
+            cid = channel.channel_id
+            if self.auto_heal_degraded and await self.storage.is_channel_degraded(cid):
+                continue
+            if await self.storage.is_user_cached(channel.scope, cid, user_id):
+                continue
+            if self.allow_pending_requests and channel.allow_pending_request:
+                if await self.storage.has_pending_request(cid, user_id):
+                    await self.storage.cache_user_subscription(channel.scope, cid, user_id, self.cache_ttl)
+                    continue
 
+            is_member = await self._verify_telegram_membership(bot, cid, user_id, channel)
+            if is_member:
+                await self.storage.cache_user_subscription(channel.scope, cid, user_id, self.cache_ttl)
+                await self.storage.record_user_join(channel.scope, cid, user_id)
+            else:
+                unjoined_secondary.append(channel)
+
+        if unjoined_secondary:
+            if self.max_visible_channels and len(unjoined_secondary) > self.max_visible_channels:
+                unjoined_secondary = unjoined_secondary[:self.max_visible_channels]
+            return CheckResult(
+                is_subscribed=False,
+                unjoined_channels=unjoined_secondary,
+                category=ChannelCategory.SECONDARY,
+                cached=False,
+                user_id=user_id,
+                bot_id=int(effective_bot_id) if effective_bot_id.isdigit() else None,
+            )
+
+        # --- TIER 3: DIRECT PROMO LINKS (Without check, frequency capped) ---
+        for link in link_channels:
+            lid = link.channel_id
+            should_show = await self.storage.check_and_record_link_impression(
+                link.scope, lid, user_id, cap=link.frequency_cap, period=link.frequency_period
+            )
+            if should_show:
+                await self.storage.increment_link_views(link.scope, lid)
+                return CheckResult(
+                    is_subscribed=False,
+                    unjoined_channels=[link],
+                    category=ChannelCategory.LINK,
+                    active_link=link,
+                    cached=False,
+                    user_id=user_id,
+                    bot_id=int(effective_bot_id) if effective_bot_id.isdigit() else None,
+                )
+
+        # All tiers satisfied!
         return CheckResult(
-            is_subscribed=(len(unjoined) == 0),
-            unjoined_channels=unjoined,
-            cached=all_cached,
+            is_subscribed=True,
+            unjoined_channels=[],
+            cached=True,
             user_id=user_id,
             bot_id=int(effective_bot_id) if effective_bot_id.isdigit() else None,
         )
@@ -252,7 +378,23 @@ class ForcedSubManager:
         user_first_name: str = "",
         template: Optional[str] = None,
     ) -> str:
-        """Render the warning text with channel list and placeholders."""
+        """Render the warning or promotional text with channel list or link and placeholders."""
+        first_name = user_first_name or "المستخدم"
+
+        # Special handling for LINK category
+        if result.category == ChannelCategory.LINK and result.unjoined_channels:
+            link = result.unjoined_channels[0]
+            if link.ad_text:
+                return link.ad_text.replace("@اسم", first_name).replace("@رابط", link.invite_link)
+            tpl = template or self.link_message
+            link_block = f"🔗 <a href=\"{link.invite_link}\">{link.title}</a>"
+            return tpl.format(
+                name=first_name,
+                user_id=result.user_id,
+                channels=link_block,
+                count=1,
+            )
+
         tpl = template or self.custom_message
 
         channels_text_lines = []
@@ -261,7 +403,6 @@ class ForcedSubManager:
             channels_text_lines.append(line)
 
         channels_block = "\n".join(channels_text_lines)
-        first_name = user_first_name or "المستخدم"
 
         return tpl.format(
             name=first_name,
@@ -275,8 +416,22 @@ class ForcedSubManager:
         result: CheckResult,
         custom_buttons: Optional[List[InlineKeyboardButton]] = None,
     ) -> InlineKeyboardMarkup:
-        """Construct inline keyboard containing channel links + Check button."""
+        """Construct inline keyboard containing channel links + Check / Continue button."""
         builder = InlineKeyboardBuilder()
+
+        # If it's a LINK category:
+        if result.category == ChannelCategory.LINK and result.unjoined_channels:
+            link = result.unjoined_channels[0]
+            btn_text = f"🔗 {link.title}"
+            builder.row(InlineKeyboardButton(text=btn_text, url=link.invite_link))
+            cont_btn = InlineKeyboardButton(
+                text=self.continue_button_text,
+                callback_data=self.check_callback_data,
+            )
+            builder.row(cont_btn)
+            if custom_buttons:
+                builder.row(*custom_buttons)
+            return builder.as_markup()
 
         # One button per unjoined channel
         for ch in result.unjoined_channels:

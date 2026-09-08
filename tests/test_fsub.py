@@ -106,6 +106,76 @@ class TestForcedSubManager(unittest.IsolatedAsyncioTestCase):
         )
         storage_mock.invalidate_user_cache.assert_called()
 
+    async def test_three_tier_check_flow(self):
+        from tg_forced_sub.models import ChannelCategory
+        storage_mock = AsyncMock()
+        manager = ForcedSubManager(storage=storage_mock)
+
+        ch_primary1 = ForcedChannel(
+            channel_id=-1001, title="Prim 1", invite_link="https://t.me/p1",
+            category=ChannelCategory.PRIMARY, position=2
+        )
+        ch_primary2 = ForcedChannel(
+            channel_id=-1002, title="Prim 2", invite_link="https://t.me/p2",
+            category=ChannelCategory.PRIMARY, position=1
+        )
+        ch_sec1 = ForcedChannel(
+            channel_id=-1003, title="Sec 1", invite_link="https://t.me/s1",
+            category=ChannelCategory.SECONDARY
+        )
+        ch_link = ForcedChannel(
+            channel_id="link_1", title="Promo Link", invite_link="https://promo.com",
+            category=ChannelCategory.LINK
+        )
+
+        storage_mock.get_channels.return_value = [ch_primary1, ch_primary2, ch_sec1, ch_link]
+        storage_mock.is_channel_degraded.return_value = False
+        storage_mock.is_user_cached.return_value = False
+        storage_mock.has_pending_request.return_value = False
+
+        bot_mock = AsyncMock()
+        # Case 1: User joined nothing -> should return ONLY first primary channel (Prim 1)
+        manager._verify_telegram_membership = AsyncMock(return_value=False)
+        res1 = await manager.check_user(bot=bot_mock, user_id=111, bot_id=999)
+        self.assertFalse(res1.is_subscribed)
+        self.assertEqual(res1.category, ChannelCategory.PRIMARY)
+        self.assertEqual(len(res1.unjoined_channels), 1)
+        self.assertEqual(res1.unjoined_channels[0].title, "Prim 1")
+
+        # Case 2: User joined primary 1, but not primary 2 -> should return Prim 2
+        async def mock_membership(b, cid, uid, ch):
+            return str(cid) == "-1001"
+        manager._verify_telegram_membership = mock_membership
+        res2 = await manager.check_user(bot=bot_mock, user_id=111, bot_id=999)
+        self.assertFalse(res2.is_subscribed)
+        self.assertEqual(res2.category, ChannelCategory.PRIMARY)
+        self.assertEqual(res2.unjoined_channels[0].title, "Prim 2")
+
+        # Case 3: User joined both primaries, not secondary -> returns all unjoined secondaries
+        async def mock_both_primaries(b, cid, uid, ch):
+            return str(cid) in ("-1001", "-1002")
+        manager._verify_telegram_membership = mock_both_primaries
+        res3 = await manager.check_user(bot=bot_mock, user_id=111, bot_id=999)
+        self.assertFalse(res3.is_subscribed)
+        self.assertEqual(res3.category, ChannelCategory.SECONDARY)
+        self.assertEqual(res3.unjoined_channels[0].title, "Sec 1")
+
+        # Case 4: User joined all channels -> check promo link
+        async def mock_all_joined(b, cid, uid, ch):
+            return True
+        manager._verify_telegram_membership = mock_all_joined
+        storage_mock.check_and_record_link_impression.return_value = True
+
+        res4 = await manager.check_user(bot=bot_mock, user_id=111, bot_id=999)
+        self.assertFalse(res4.is_subscribed)
+        self.assertEqual(res4.category, ChannelCategory.LINK)
+        self.assertEqual(res4.unjoined_channels[0].title, "Promo Link")
+
+        # Case 5: Link cap reached -> user is fully subscribed
+        storage_mock.check_and_record_link_impression.return_value = False
+        res5 = await manager.check_user(bot=bot_mock, user_id=111, bot_id=999)
+        self.assertTrue(res5.is_subscribed)
+
 
 if __name__ == "__main__":
     unittest.main()
