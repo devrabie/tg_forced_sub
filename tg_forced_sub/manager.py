@@ -187,6 +187,7 @@ class ForcedSubManager:
         user_id: int,
         user_first_name: str = "",
         bot_id: Optional[Union[int, str]] = None,
+        scopes: Optional[List[str]] = None,
     ) -> CheckResult:
         """
         Comprehensive 3-tier check:
@@ -194,10 +195,11 @@ class ForcedSubManager:
         Tier 2: SECONDARY channels (Combined: all unjoined secondary channels in one message).
         Tier 3: DIRECT PROMO LINKS (Frequency Capped: shows if under impression cap within period).
         """
-        scopes = ["global"]
-        effective_bot_id = str(bot_id) if bot_id else str(bot.id)
-        if effective_bot_id != "global":
-            scopes.append(effective_bot_id)
+        if scopes is None:
+            scopes = ["global"]
+            effective_bot_id = str(bot_id) if bot_id else str(bot.id)
+            if effective_bot_id != "global":
+                scopes.append(effective_bot_id)
 
         all_channels: List[ForcedChannel] = []
         seen_channel_ids = set()
