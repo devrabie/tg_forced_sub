@@ -3,7 +3,7 @@ import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from tg_forced_sub.models import ForcedChannel, ChannelStatus, ChannelType, CheckResult
+from tg_forced_sub.models import ForcedChannel, ChannelCategory, ChannelStatus, ChannelType, CheckResult
 from tg_forced_sub.manager import ForcedSubManager
 
 
@@ -175,6 +175,26 @@ class TestForcedSubManager(unittest.IsolatedAsyncioTestCase):
         storage_mock.check_and_record_link_impression.return_value = False
         res5 = await manager.check_user(bot=bot_mock, user_id=111, bot_id=999)
         self.assertTrue(res5.is_subscribed)
+
+    async def test_check_user_with_explicit_scopes(self):
+        storage_mock = AsyncMock()
+        storage_mock.is_channel_degraded.return_value = False
+        storage_mock.is_user_cached.return_value = False
+        storage_mock.has_pending_request.return_value = False
+        storage_mock.get_channels.return_value = [
+            ForcedChannel(channel_id=-1001, title="Prim 1", invite_link="https://t.me/prim1", category=ChannelCategory.PRIMARY, position=10, scope="global")
+        ]
+
+        manager = ForcedSubManager(storage=storage_mock)
+        bot_mock = AsyncMock()
+        bot_mock.id = 6887186249
+        manager._verify_telegram_membership = AsyncMock(return_value=False)
+
+        # Explicit scopes list passed - must not raise UnboundLocalError
+        res = await manager.check_user(bot=bot_mock, user_id=111, bot_id=6887186249, scopes=["global"])
+        self.assertFalse(res.is_subscribed)
+        self.assertEqual(res.bot_id, 6887186249)
+        self.assertEqual(len(res.unjoined_channels), 1)
 
 
 if __name__ == "__main__":

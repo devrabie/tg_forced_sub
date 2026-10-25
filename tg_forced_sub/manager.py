@@ -195,10 +195,10 @@ class ForcedSubManager:
         Tier 2: SECONDARY channels (Combined: all unjoined secondary channels in one message).
         Tier 3: DIRECT PROMO LINKS (Frequency Capped: shows if under impression cap within period).
         """
+        effective_bot_id = str(bot_id) if bot_id is not None else (str(bot.id) if bot and hasattr(bot, "id") else "")
         if scopes is None:
             scopes = ["global"]
-            effective_bot_id = str(bot_id) if bot_id else str(bot.id)
-            if effective_bot_id != "global":
+            if effective_bot_id and effective_bot_id != "global":
                 scopes.append(effective_bot_id)
 
         all_channels: List[ForcedChannel] = []
