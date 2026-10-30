@@ -41,6 +41,10 @@ class ForcedSubMiddleware(BaseMiddleware):
         if isinstance(event, Update):
             real_event = event.event
 
+        # Immediately pass through non-interactive updates (e.g. PreCheckoutQuery, ChatMemberUpdated, etc.)
+        if not isinstance(real_event, (Message, CallbackQuery)):
+            return await handler(event, data)
+
         user = getattr(real_event, "from_user", None)
         if not user or user.is_bot:
             return await handler(event, data)

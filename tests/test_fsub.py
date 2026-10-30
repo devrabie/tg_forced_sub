@@ -196,7 +196,30 @@ class TestForcedSubManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.bot_id, 6887186249)
         self.assertEqual(len(res.unjoined_channels), 1)
 
+    async def test_middleware_non_interactive_passthrough(self):
+        from tg_forced_sub.middleware import ForcedSubMiddleware
+        from aiogram.types import PreCheckoutQuery, User
+
+        manager_mock = MagicMock()
+        manager_mock.check_user = AsyncMock()
+        middleware = ForcedSubMiddleware(manager=manager_mock)
+
+        handler_mock = AsyncMock(return_value="handler_called")
+        pre_checkout = PreCheckoutQuery(
+            id="pcq_123",
+            from_user=User(id=999, is_bot=False, first_name="TestUser"),
+            currency="XTR",
+            total_amount=100,
+            invoice_payload="upgrade:123:monthly:30:100",
+        )
+
+        res = await middleware(handler_mock, pre_checkout, {"bot": AsyncMock()})
+        self.assertEqual(res, "handler_called")
+        handler_mock.assert_awaited_once()
+        manager_mock.check_user.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
