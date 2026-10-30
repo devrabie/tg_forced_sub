@@ -45,6 +45,13 @@ class ForcedSubMiddleware(BaseMiddleware):
         if not isinstance(real_event, (Message, CallbackQuery)):
             return await handler(event, data)
 
+        # Service messages (e.g. successful_payment, refunded_payment) are non-interactive payment confirmations
+        if isinstance(real_event, Message) and (
+            getattr(real_event, "successful_payment", None) is not None
+            or getattr(real_event, "refunded_payment", None) is not None
+        ):
+            return await handler(event, data)
+
         user = getattr(real_event, "from_user", None)
         if not user or user.is_bot:
             return await handler(event, data)

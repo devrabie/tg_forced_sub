@@ -218,6 +218,38 @@ class TestForcedSubManager(unittest.IsolatedAsyncioTestCase):
         handler_mock.assert_awaited_once()
         manager_mock.check_user.assert_not_called()
 
+    async def test_middleware_successful_payment_passthrough(self):
+        from tg_forced_sub.middleware import ForcedSubMiddleware
+        from aiogram.types import Message, SuccessfulPayment, User, Chat
+        from aiogram.enums import ChatType
+
+        manager_mock = MagicMock()
+        manager_mock.check_user = AsyncMock()
+        middleware = ForcedSubMiddleware(manager=manager_mock)
+
+        handler_mock = AsyncMock(return_value="payment_handled")
+        user = User(id=777, is_bot=False, first_name="Payer")
+        chat = Chat(id=777, type=ChatType.PRIVATE)
+        payment = SuccessfulPayment(
+            currency="XTR",
+            total_amount=100,
+            invoice_payload="upgrade:123:monthly:30:100",
+            telegram_payment_charge_id="ch_123",
+            provider_payment_charge_id="",
+        )
+        msg = Message.model_construct(
+            message_id=10,
+            date=1234567,
+            chat=chat,
+            from_user=user,
+            successful_payment=payment,
+        )
+
+        res = await middleware(handler_mock, msg, {"bot": AsyncMock()})
+        self.assertEqual(res, "payment_handled")
+        handler_mock.assert_awaited_once()
+        manager_mock.check_user.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
