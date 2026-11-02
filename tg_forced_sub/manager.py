@@ -250,8 +250,9 @@ class ForcedSubManager:
                     bot_id=int(effective_bot_id) if effective_bot_id.isdigit() else None,
                 )
 
-        # --- TIER 2: SECONDARY CHANNELS (Combined) ---
+        # --- TIER 2: SECONDARY CHANNELS (Combined - Concurrent Verification) ---
         unjoined_secondary = []
+        secondary_to_verify = []
         for channel in secondary_channels:
             cid = channel.channel_id
             if self.auto_heal_degraded and await self.storage.is_channel_degraded(cid):
@@ -262,13 +263,20 @@ class ForcedSubManager:
                 if await self.storage.has_pending_request(cid, user_id):
                     await self.storage.cache_user_subscription(channel.scope, cid, user_id, self.cache_ttl)
                     continue
+            secondary_to_verify.append(channel)
 
-            is_member = await self._verify_telegram_membership(bot, cid, user_id, channel)
-            if is_member:
-                await self.storage.cache_user_subscription(channel.scope, cid, user_id, self.cache_ttl)
-                await self.storage.record_user_join(channel.scope, cid, user_id)
-            else:
-                unjoined_secondary.append(channel)
+        if secondary_to_verify:
+            probe_results = await asyncio.gather(
+                *[self._verify_telegram_membership(bot, ch.channel_id, user_id, ch) for ch in secondary_to_verify],
+                return_exceptions=True
+            )
+            for channel, is_member in zip(secondary_to_verify, probe_results):
+                cid = channel.channel_id
+                if is_member is True:
+                    await self.storage.cache_user_subscription(channel.scope, cid, user_id, self.cache_ttl)
+                    await self.storage.record_user_join(channel.scope, cid, user_id)
+                else:
+                    unjoined_secondary.append(channel)
 
         if unjoined_secondary:
             if self.max_visible_channels and len(unjoined_secondary) > self.max_visible_channels:
